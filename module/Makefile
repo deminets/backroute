@@ -1,5 +1,8 @@
 
 obj-m += xt_BACKROUTE.o
+#obj-m += nf_backroute.o
+
+nf_backroute-y := nf_backroute_mod.o
 xt_BACKROUTE-y := xt_BACKROUTE_core.o
 
 KDIR := /lib/modules/$(shell uname -r)/build

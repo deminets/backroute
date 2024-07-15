@@ -1,6 +1,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/version.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/x_tables.h>
@@ -28,6 +29,28 @@
 
 #define MOD_NAME	"xt_BACKROUTE"
 #define MOD_ALIAS	"ipt_BACKROUTE"
+
+// =====================================================================
+
+typedef enum dbg_lvl_e {
+	lvl_alw = 0,
+	lvl_crt,
+	lvl_err,
+	lvl_wrn,
+	lvl_inf,
+	lvl_MAX
+	} dbg_lvl_t;
+
+static int DBG = lvl_err;
+
+//#define PRN(lvl, lvlstr, fmt, ... )	do{ if(lvl > DBG) break; printk(KERN_ALERT lvlstr ":" MOD_NAME ": " fmt, ##__VA_ARGS__ ); }while(0)
+#define PRN(lvl, lvlstr, fmt, ... )	do{ if(lvl > DBG) break; printk(lvlstr ":" MOD_NAME ": " fmt, ##__VA_ARGS__ ); }while(0)
+
+#define PRN_INF(fmt, ...)	PRN(lvl_inf, KERN_INFO    "INF", fmt, ##__VA_ARGS__)
+#define PRN_WRN(fmt, ...)	PRN(lvl_wrn, KERN_WARNING "WRN", fmt, ##__VA_ARGS__)
+#define PRN_ERR(fmt, ...)	PRN(lvl_err, KERN_ERR     "ERR", fmt, ##__VA_ARGS__)
+#define PRN_CRT(fmt, ...)	PRN(lvl_crt, KERN_ALERT   "CRT", fmt, ##__VA_ARGS__)
+#define PRN_ALW(fmt, ...)	PRN(lvl_alw,              "ALW", fmt, ##__VA_ARGS__)
 
 // =====================================================================
 
@@ -94,6 +117,7 @@ out:
 	return(udt);
 }
 
+static atomic_t *p_nf_conntrack_ext_genid = NULL;
 
 static iptbckrtdt_t * crt_or_fnd_cte(struct nf_conn *ct)
 {
@@ -113,21 +137,23 @@ static iptbckrtdt_t * crt_or_fnd_cte(struct nf_conn *ct)
 	nof = ALIGN(oln, __alignof__(struct nf_ct_ext));
 	len = nof + sizeof(*pudt);
 	alc = max(len, 128u);
-
 	new = krealloc(ct->ext, alc, GFP_ATOMIC);
 	if (!new)
 		goto out;
 
 	if (!ct->ext) {
 		memset(new->offset, 0, sizeof(new->offset));
-		//new->gen_id = atomic_read(&nf_conntrack_ext_genid);
+		if(p_nf_conntrack_ext_genid) {
+		    new->gen_id = atomic_read(p_nf_conntrack_ext_genid);
+		}else{
+		    new->gen_id = 1;
+		}
 	}
 
 	new->len = len;
 	pudt = (void*)new + nof;
 	memcpy(pudt->sign, sign_iptbckrtdt, sizeof(pudt->sign));
 	//memcpy((void*)new + nof, pudt, sizeof(*pudt));
-	//printk("dst=%p, src=%p, sz=%ld ct->ext=%p new=%p\n",(void*)new + nof, udt, sizeof(*udt), ct->ext, new);
 
 	ct->ext = new;
 out:
@@ -146,11 +172,15 @@ static int xmit_skb(struct net *net, struct sk_buff *skb, int idxdev, uint8_t *d
 	if(!net) goto err;
 
 	idev = dev_get_by_index(net, idxdev);
-	if(!idev) goto err;
+	if(!idev) {
+		PRN_ERR("dev_get_by_index\n");
+		goto err;
+	}
 
 	nskb = skb_clone(skb, GFP_ATOMIC);
 	if(!nskb) {
 		ret = -ENOMEM;
+		PRN_ERR("skb_clone = ENOMEM\n");
 		goto out;
 	}
 
@@ -163,7 +193,7 @@ static int xmit_skb(struct net *net, struct sk_buff *skb, int idxdev, uint8_t *d
 		}
 
 	if(ret) {
-		printk("ERR: dev_queue_xmit = %d\n",ret);
+		PRN_ERR("dev_queue_xmit = %d\n",ret);
 		ret = -EIO;
 	}
 
@@ -172,7 +202,7 @@ out:
 	if(nskb) kfree_skb(nskb);
 	return(ret);
 err:
-	printk("ERR: net=%p idev=%p idxdev=%d\n",net, idev, idxdev);
+	PRN_ERR("net=%p idev=%p idxdev=%d\n",net, idev, idxdev);
 	ret = -EINVAL;
 	goto out;
 }
@@ -196,11 +226,14 @@ static unsigned int backroute_output(
 
 	iph = ip_hdr(skb);
 	if(!iph) goto out;
-	if ( skb->protocol != htons(ETH_P_IP) && 
+	if ( skb->protocol != htons(ETH_P_IP) &&
 	     skb->protocol != htons(ETH_P_IPV6) ) goto out;
 
 	ct = nf_ct_get(skb, &ctinfo);
-	if(!ct) goto out;
+	if(!ct) {
+		PRN_WRN("ct == NULL\n");
+		goto out;
+	}
 
 	dir = CTINFO2DIR(ctinfo);
 	dir = (dir == IP_CT_DIR_ORIGINAL)?0:1;
@@ -225,13 +258,13 @@ static unsigned int backroute_output(
 
 	ret = xmit_skb(state->net, skb, pudt->ifindex, pudt->mac);
 	if(!ret) {
-		printk("TXO: skb=%p ct=%p cte=%p dIP=%08X dev=%s\n", skb, ct, ct->ext, iph->daddr, skb->dev->name);
+		PRN_INF("TX OK: skb=%p ct=%p cte=%p dIP=%08X dev=%s\n", skb, ct, ct->ext, iph->daddr, skb->dev->name);
 		return NF_DROP;
 	}else{
-		printk("ErrTX=%d skb=%p ct=%p cte=%p dIP=%08X dev=%s\n", ret, skb, ct, ct->ext, iph->daddr, skb->dev->name);
+		PRN_ERR("TX Err=%d skb=%p ct=%p cte=%p dIP=%08X dev=%s\n", ret, skb, ct, ct->ext, iph->daddr, skb->dev->name);
 	}
 
-out:	
+out:
     return NF_ACCEPT;
 }
 
@@ -270,7 +303,7 @@ static unsigned int backroute_tg_v4(struct sk_buff *skb, const struct xt_action_
 	enum ip_conntrack_info ctinfo;
 	int dir;
 	int  ifindex = -1;
-	uint8_t	mac[ETH_ALEN];
+	uint8_t	mac[ETH_ALEN] = {0};
 
 	if(!skb && !skb->dev) goto out;
 
@@ -282,7 +315,10 @@ static unsigned int backroute_tg_v4(struct sk_buff *skb, const struct xt_action_
 	//if(ctinfo == IP_CT_NEW)
 
 	pudt = crt_or_fnd_cte(ct);
-	if(!pudt) goto out; // что-то полшло не так.
+	if(!pudt) {
+		PRN_ERR("crt_or_fnd_cte\n");
+		goto out; // что-то полшло не так.
+	}
 
 	ifindex = skb->dev->ifindex;
 
@@ -304,7 +340,7 @@ static unsigned int backroute_tg_v4(struct sk_buff *skb, const struct xt_action_
 	pudt->ifindex	= ifindex;
 	memcpy(pudt->mac, mac, sizeof(pudt->mac));
 	pudt->f_init	= 1;
-printk("backroute_tg_v4 upd = OK\n");
+	PRN_INF("backroute_tg_v4 upd = OK\n");
 out:
 	return(NF_ACCEPT);
 }
@@ -315,6 +351,8 @@ static int backroute_tg_check(const struct xt_tgchk_param *par)
 	int ret = 0;
 	const nf_backroute_t *opt = par->targinfo;
 	nf_backroute_t tmp = *opt;
+
+	PRN_INF("%s()\n",__FUNCTION__);
 
 	tmp.f_update = 0;
 	tmp.f_hook = 0;
@@ -330,6 +368,7 @@ static int backroute_tg_check(const struct xt_tgchk_param *par)
 
 static void backroute_tg_destroy(const struct xt_tgdtor_param *par)
 {
+	PRN_INF("%s()\n",__FUNCTION__);
 	nf_ct_netns_put(par->net, par->family);
 }
 
@@ -361,21 +400,26 @@ static int __init nf_module_init(void)
 
 	BUILD_BUG_ON( sizeof(iptbckrtdt_t) > 16 );
 
-	printk(KERN_INFO MOD_NAME " module initialized.\n");
+	PRN_INF("%s()\n",__FUNCTION__);
+
+//	p_nf_conntrack_ext_genid = (atomic_t *)kallsyms_lookup_name("nf_conntrack_ext_genid");
+//	PRN_INF("nf_conntrack_ext_genid = %p\n",p_nf_conntrack_ext_genid);
+
+	PRN_ALW("module initialized, DBGlevel=%d\n",DBG);
 	ret = nf_register_net_hooks(&init_net, all_backroute_hooks, all_backroute_hooks_num);
 	if (ret < 0) {
-		printk(KERN_INFO MOD_NAME " - Failed to register hook\n");
+		PRN_ERR("Failed to register hooks\n");
 		goto out;
 	} else {
-		printk(KERN_INFO MOD_NAME " - OK to register hook\n");
+		PRN_ALW("OK to register hook\n");
 	}
 
 	ret = xt_register_targets(backroute_tg_reg, backroute_tg_reg_num);
 	if(ret) {
-		printk(KERN_INFO MOD_NAME " xt_register_targets = %d\n",ret);
+		PRN_ALW("xt_register_targets = %d\n",ret);
 		nf_unregister_net_hooks(&init_net, all_backroute_hooks, all_backroute_hooks_num);
 	}else{
-		printk(KERN_INFO MOD_NAME " - OK to register targets\n");
+		PRN_ALW("OK to register targets\n");
 	}
 
 out:
@@ -385,13 +429,15 @@ out:
 
 static void __exit nf_module_exit(void)
 {
-	printk(KERN_INFO MOD_NAME " module exit.\n");
+	PRN_ALW("module exit.\n");
+	PRN_INF("%s()\n",__FUNCTION__);
 	nf_unregister_net_hooks(&init_net, all_backroute_hooks, all_backroute_hooks_num);
 	xt_unregister_targets(backroute_tg_reg, backroute_tg_reg_num);
 }
 
 // =====================================================================
 
+module_param(DBG, int, S_IRUGO | S_IWUSR); /* /sys/module/xt_BACKROUTE/parameters/DBG */
 module_init(nf_module_init);
 module_exit(nf_module_exit);
 

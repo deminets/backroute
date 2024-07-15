@@ -22,12 +22,12 @@ endif
 endif
 PHONY += install
 install: ${LIBNAME}
-	@echo cp -f ./${LIBNAME} $(INSTALL_DIR)${LIBNAME}
+	cp -f ./${LIBNAME} $(INSTALL_DIR)${LIBNAME}
 
 
 PHONY += remove
 remove:
-	echo rm -f $(INSTALL_DIR)${LIBNAME}
+	rm -f $(INSTALL_DIR)${LIBNAME}
 
 
 PHONY += clean
