@@ -1,3 +1,10 @@
+# Name:                backroute
+# Date:                2024
+# Version:             1.0.0
+# Brief:               BackRoute
+# License:             Apache License 2.0
+# Author(s):           deminets
+
 $(info ################# START MAKEFILE #################)
 .DEFAULT_GOAL := all
 # =============================================

@@ -1,3 +1,11 @@
+/* Name:		backroute
+ * Date:		2024
+ * Version:		1.0.0
+ * Brief:		BackRoute module
+ * License:		Apache License 2.0
+ * Author(s):		deminets
+ * */
+
 #ifndef _INCLUDE_BACKROUTE_H
 #define _INCLUDE_BACKROUTE_H
 

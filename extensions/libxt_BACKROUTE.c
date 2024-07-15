@@ -1,3 +1,11 @@
+/* Name:                backroute
+ * Date:                2024
+ * Version:             1.0.0
+ * Brief:               BackRoute extension
+ * License:             Apache License 2.0
+ * Author(s):           deminets
+ * */
+
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <stdbool.h>

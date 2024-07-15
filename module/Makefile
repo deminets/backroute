@@ -1,3 +1,9 @@
+# Name:                backroute
+# Date:                2024
+# Version:             1.0.0
+# Brief:               BackRoute module
+# License:             Apache License 2.0
+# Author(s):           deminets
 
 obj-m += xt_BACKROUTE.o
 #obj-m += nf_backroute.o
